@@ -13,54 +13,44 @@ using Debug = UnityEngine.Debug;
 
 namespace OpenCVForUnityExample
 {
-    /// <summary>
-    /// Multi Object Tracking Based on Color Example
-    /// Referring to https://www.youtube.com/watch?v=hQ-bpfdWQh8.
-    /// </summary>
     [RequireComponent(typeof(WebCamTextureToMatHelper))]
     public class Pink_track : MonoBehaviour
     {
-        int start = 798;
+        int Greenstart = 798;//target area start used to calibrate HSV color tracking for green team
+        public float throwThresh = 9f;//changes the vertical line where the javelin is thrown on each side
 
-        public JavRB2P Jav2P;
+        Texture2D texture;//used to put webcam onto object texture
+        const int MAX_NUM_OBJECTS = 2; //how many colored objects are we tracking?
+        const int MIN_OBJECT_AREA = 35 * 35;//smallest object size (in pixels x pixels) that we will bother tracking
 
-        private Vector3 Displacement;
-
-        /// The texture.
-        Texture2D texture;
-        const int MAX_NUM_OBJECTS = 2;
-        const int MIN_OBJECT_AREA = 35 * 35;
-
+        //HSV values for each color we'll be tracking
         Scalar redHSVmin;
         Scalar redHSVmax;
         Scalar greenHSVmin;
         Scalar greenHSVmax;
 
+        //user controlled ball positions (public to be accessed by JavRB2p script)
         public int ball1Y;
         public int ball1X;
-
         public int ball2Y;
         public int ball2X;
 
-        int rows = 50; //make public, control size of squares
+        //size of target area for color calibration
+        int rows = 50; 
         int cols = 50;
 
-        float PThrowThresh;
-        float MThrowThresh;
-
+        //initialize Mats for image processing
         Mat rgbMat;
         Mat thresholdMat;
         Mat hsvMat;
 
+        //pull initial color tracking data from ColorObject script
         ColorObject red = new ColorObject("red");
         ColorObject green = new ColorObject("green");
         WebCamTextureToMatHelper webCamTextureToMatHelper;
-        FpsMonitor fpsMonitor;
-        // Use this for initialization
-        void Start()
-        {
-            fpsMonitor = GetComponent<FpsMonitor>();
 
+        void Start()
+        { 
             webCamTextureToMatHelper = gameObject.GetComponent<WebCamTextureToMatHelper>();
 
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -75,54 +65,47 @@ namespace OpenCVForUnityExample
             greenHSVmin = green.getHSVmin();
         }
 
-
-
-        // Update is called once per frame
         void Update()
         {
-            if (webCamTextureToMatHelper.IsPlaying() && webCamTextureToMatHelper.DidUpdateThisFrame())
+            if (webCamTextureToMatHelper.IsPlaying() && webCamTextureToMatHelper.DidUpdateThisFrame())//only run if we updated and we have our camera up
             {
-                PThrowThresh=((float)Jav2P.throwThresh+13.3f)*33f;
-                MThrowThresh = (-(float)Jav2P.throwThresh + 13.3f) * 33f;
+                float PThrowThresh=(throwThresh+13.3f)*33f;
+                float MThrowThresh = (-throwThresh + 13.3f) * 33f;
 
-                Mat rgbaMat = webCamTextureToMatHelper.GetMat();
+                //Image processing set up
+                Mat rgbaMat = webCamTextureToMatHelper.GetMat();//initialize rgba Mat with cam input
+                Imgproc.cvtColor(rgbaMat, rgbMat, Imgproc.COLOR_RGBA2RGB);//convert rgba->rgb
+                Imgproc.cvtColor(rgbMat, hsvMat, Imgproc.COLOR_RGB2HSV);//convert rgb-> HSV
 
-                Imgproc.cvtColor(rgbaMat, rgbMat, Imgproc.COLOR_RGBA2RGB);
+                if (Input.GetKeyDown(KeyCode.P)) //reset red tracking HSV target range
+                {
+                    redHSVmax = findHSVmax(hsvMat, 0);
+                    redHSVmin = findHSVmin(hsvMat, 0);
+                }
 
-                Imgproc.cvtColor(rgbMat, hsvMat, Imgproc.COLOR_RGB2HSV);
+                //tracking red
                 Core.inRange(hsvMat, redHSVmin, redHSVmax, thresholdMat);
                 morphOps(thresholdMat);
                 trackFilteredObject(red, thresholdMat, hsvMat, rgbMat);
 
-
-                if (Input.GetKeyDown(KeyCode.G))
+                if (Input.GetKeyDown(KeyCode.G))//reset green tracking HSV target range
                 {
-                    greenHSVmax = findHSVmax(hsvMat,start);
-                    greenHSVmin = findHSVmin(hsvMat,start);
+                    greenHSVmax = findHSVmax(hsvMat,Greenstart);
+                    greenHSVmin = findHSVmin(hsvMat, Greenstart);
                 }
 
-                Imgproc.cvtColor (rgbMat, hsvMat, Imgproc.COLOR_RGB2HSV);
+                //tracking green
                 Core.inRange (hsvMat, greenHSVmin, greenHSVmax, thresholdMat);
                 morphOps (thresholdMat);
                 trackFilteredObject (green, thresholdMat, hsvMat, rgbMat);
 
-
-                Imgproc.rectangle(rgbMat, new Point(0, 0), new Point(rows, cols), new Scalar(255, 0, 0), 2);
-                Imgproc.rectangle(rgbMat, new Point(PThrowThresh, 0), new Point(MThrowThresh, 480), new Scalar(255, 0, 0), 2);
-                Imgproc.rectangle(rgbMat, new Point(start, 0), new Point(rows+ start, cols), new Scalar(0, 0, 255), 2);
-                Utils.fastMatToTexture2D(rgbMat, texture);
-
-
-                if (Input.GetKeyDown(KeyCode.P))
-                {
-                    redHSVmax = findHSVmax(hsvMat,0);
-                    redHSVmin = findHSVmin(hsvMat,0);
-                }
-
-               
+                Imgproc.rectangle(rgbMat, new Point(0, 0), new Point(rows, cols), new Scalar(255, 0, 0), 2);//draw red tracking calibration area
+                Imgproc.rectangle(rgbMat, new Point(PThrowThresh, 0), new Point(MThrowThresh, 480), new Scalar(255, 0, 0), 2);//draw throw threshold verticals
+                Imgproc.rectangle(rgbMat, new Point(Greenstart, 0), new Point(rows+ Greenstart, cols), new Scalar(0, 0, 255), 2);//draw green tracking calibration area
+                Utils.fastMatToTexture2D(rgbMat, texture);//set cam input and all our drawings to the object texture
             }
         }
-        private Scalar findHSVmax(Mat hsv,int start) //need to create subset mat in target area
+        private Scalar findHSVmax(Mat hsv,int start) //calibration to find HSV maximum for the object we want to track
         {
             double[] max = hsv.get(0, start); //for comparison
             Debug.Log(max[0]);
@@ -144,9 +127,9 @@ namespace OpenCVForUnityExample
             return maxHSV;
         }
 
-        private Scalar findHSVmin(Mat hsv,int start) //need to create subset mat in target area
+        private Scalar findHSVmin(Mat hsv,int start) //calibration to find HSV minimum for the object we want to track
         {
-            double[] min = hsv.get(0, start);
+            double[] min = hsv.get(0, start);//for comparison
             double[] check;
 
             for (int i = 0; i < rows; i++)
@@ -164,6 +147,9 @@ namespace OpenCVForUnityExample
             Debug.Log(minHSV);
             return minHSV;
         }
+
+
+//prebuilt image processing functions below:
         /// <param name="thresh">Thresh.</param>
         private void morphOps(Mat thresh)
         {
